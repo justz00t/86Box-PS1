@@ -835,3 +835,280 @@ machine_ps1_m2133_init(const machine_t *model)
 
     return ret;
 }
+
+/*
+ * IBM PS/1 2133/2155, 486SX planar with 30-pin SIMMs (board 01-10156-01).
+ *
+ * VLSI TOPCAT (VL82C330/331/332), VL82C106 combination I/O, Tseng ET4000AX
+ * on board with its video BIOS in the lower half of the 128K system ROM
+ * (E000:0000), BIOS dated 08/27/92 on an even/odd EPROM pair (33G6876 /
+ * 33G6875) - use the two halves interleaved into one 128K image.
+ *
+ * Per the IBM service manual (63G2028): soldered 486SX at 20 or 25 MHz with
+ * an upgrade socket, two banks of four 30-pin SIMMs (256K, 1M or 4M, 32 MB
+ * maximum), 512K of video RAM expandable to 1 MB, no external cache.
+ * POST checkpoints go to port 190h (and to the parallel port at 3BCh).
+ * Ports 50h/54h belong to a cache controller this planar does not have.
+ */
+/*
+ * VLSI VL82C106 Combination I/O as wired on this planar (VTI data book, 1989, p. 6-89):
+ * two 16C450 UARTs, the parallel port, the 8042-compatible keyboard/mouse controller,
+ * the RTC and the floppy/IDE chip selects.
+ *
+ * Its control registers are indexes 69h-7Fh. The BIOS reaches them through 170h (index)
+ * and 171h (data), and Control Register 0 is also readable and writable at port 102h:
+ *   69h  Control 0: b0 system board enable, b1 FDC CS, b2 COMA, b3 COMA default (1 = 3F8h),
+ *                   b4 LPT, b6-5 LPT default (00 = 3BCh, 01 = 378h, 10 = 278h), b7 extended LPT
+ *   6Ah  Control 1: b0 COMB, b1 AT (1) / PS/2 (0) keyboard, b3 CS mode (1 = programmed
+ *                   decodes below), b4 HDC CS, b5 IDE, b6 CS6, b7 CS7
+ *   6Bh-7Fh  base low, base high, range for CS1 COMA, CS2 COMB, CS3 LPT, CS4 FDC,
+ *            CS5 HDC, CS6 (3F2h) and CS7 (3F7h)
+ * The keyboard controller and RTC are provided by the generic AT devices.
+ */
+typedef struct ps1_vl82c106_t {
+    uint8_t   idx;
+    uint8_t   regs[256];
+    serial_t *uart[2];
+    lpt_t    *lpt;
+} ps1_vl82c106_t;
+
+static void
+ps1_vl82c106_recalc(ps1_vl82c106_t *dev)
+{
+    const uint8_t ctrl0   = dev->regs[0x69];
+    const uint8_t ctrl1   = dev->regs[0x6a];
+    const int     sys_en  = !!(ctrl0 & 0x01);
+    const int     cs_mode = !!(ctrl1 & 0x08);
+    uint16_t      addr;
+
+    /* COMA (CS1). */
+    serial_remove(dev->uart[0]);
+    if (sys_en && (ctrl0 & 0x04)) {
+        if (cs_mode)
+            addr = (dev->regs[0x6c] << 8) | dev->regs[0x6b];
+        else
+            addr = (ctrl0 & 0x08) ? COM1_ADDR : COM2_ADDR;
+        if (addr != 0x0000)
+            serial_setup(dev->uart[0], addr, (addr & 0x0100) ? COM1_IRQ : COM2_IRQ);
+    }
+
+    /* COMB (CS2). */
+    serial_remove(dev->uart[1]);
+    if (ctrl1 & 0x01) {
+        if (cs_mode)
+            addr = (dev->regs[0x6f] << 8) | dev->regs[0x6e];
+        else
+            addr = (ctrl0 & 0x08) ? COM2_ADDR : COM1_ADDR;
+        if (addr != 0x0000)
+            serial_setup(dev->uart[1], addr, (addr & 0x0100) ? COM1_IRQ : COM2_IRQ);
+    }
+
+    /* Parallel port (CS3). */
+    lpt_port_remove(dev->lpt);
+    if (sys_en && (ctrl0 & 0x10)) {
+        if (cs_mode)
+            addr = (dev->regs[0x72] << 8) | dev->regs[0x71];
+        else switch ((ctrl0 >> 5) & 0x03) {
+            case 0x00:
+                addr = LPT_MDA_ADDR;
+                break;
+            case 0x01:
+                addr = LPT1_ADDR;
+                break;
+            case 0x02:
+                addr = LPT2_ADDR;
+                break;
+            default:
+                addr = 0x0000;
+                break;
+        }
+        if (addr != 0x0000) {
+            lpt_port_setup(dev->lpt, addr);
+            lpt_port_irq(dev->lpt, LPT1_IRQ);
+        }
+    }
+    lpt_set_ext(dev->lpt, !!(ctrl0 & 0x80));
+}
+
+static void
+ps1_vl82c106_write(uint16_t port, uint8_t val, void *priv)
+{
+    ps1_vl82c106_t *dev = (ps1_vl82c106_t *) priv;
+
+    switch (port) {
+        case 0x0102: /* Control Register 0, PS/2-style alias */
+            dev->regs[0x69] = val;
+            ps1_vl82c106_recalc(dev);
+            break;
+        case 0x0170:
+            dev->idx = val;
+            break;
+        case 0x0171:
+            if ((dev->idx >= 0x69) && (dev->idx <= 0x7f)) {
+                dev->regs[dev->idx] = val;
+                if (dev->idx <= 0x72)
+                    ps1_vl82c106_recalc(dev);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static uint8_t
+ps1_vl82c106_read(uint16_t port, void *priv)
+{
+    const ps1_vl82c106_t *dev = (ps1_vl82c106_t *) priv;
+    uint8_t               ret = 0xff;
+
+    switch (port) {
+        case 0x0102:
+            ret = dev->regs[0x69];
+            break;
+        case 0x0170:
+            ret = dev->idx;
+            break;
+        case 0x0171:
+            if ((dev->idx >= 0x69) && (dev->idx <= 0x7f))
+                ret = dev->regs[dev->idx];
+            break;
+        default:
+            break;
+    }
+
+    return ret;
+}
+
+static void
+ps1_vl82c106_reset(void *priv)
+{
+    ps1_vl82c106_t *dev = (ps1_vl82c106_t *) priv;
+
+    memset(dev->regs, 0x00, sizeof(dev->regs));
+    dev->idx        = 0x00;
+    dev->regs[0x69] = 0x37; /* board, FDC, COMA and LPT enabled; LPT default 378h */
+    dev->regs[0x6a] = 0xf3; /* COMB, AT keyboard mode, HDC, IDE, CS6 and CS7; hard-wired decodes */
+
+    ps1_vl82c106_recalc(dev);
+}
+
+static void
+ps1_vl82c106_close(void *priv)
+{
+    free(priv);
+}
+
+static void *
+ps1_vl82c106_init(UNUSED(const device_t *info))
+{
+    ps1_vl82c106_t *dev = (ps1_vl82c106_t *) calloc(1, sizeof(ps1_vl82c106_t));
+
+    dev->uart[0] = device_add_inst(&ns16450_device, 1);
+    dev->uart[1] = device_add_inst(&ns16450_device, 2);
+    dev->lpt     = device_add_inst(&lpt_port_device, 1);
+
+    io_sethandler(0x0102, 0x0001, ps1_vl82c106_read, NULL, NULL, ps1_vl82c106_write, NULL, NULL, dev);
+    io_sethandler(0x0170, 0x0002, ps1_vl82c106_read, NULL, NULL, ps1_vl82c106_write, NULL, NULL, dev);
+
+    ps1_vl82c106_reset(dev);
+
+    return dev;
+}
+
+static const device_t ps1_vl82c106_device = {
+    .name          = "VLSI VL82C106 Combination I/O (IBM PS/1 486SX 30-pin planar)",
+    .internal_name = "ps1_vl82c106",
+    .flags         = 0,
+    .local         = 0,
+    .init          = ps1_vl82c106_init,
+    .close         = ps1_vl82c106_close,
+    .reset         = ps1_vl82c106_reset,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+static const device_config_t ps1_2133_486sx30_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "ps1_2133_33g6875",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "IBM PS/1 BIOS - 33G6876/33G6875 (08/27/92)",
+                .internal_name = "ps1_2133_33g6875",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/ibmps1_2133_486sx30/33g6875_merged.bin", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t ps1_2133_486sx30_device = {
+    .name          = "IBM PS/1 model 2133 (486SX, 30-pin SIMM planar)",
+    .internal_name = "ibmps1_2133_486sx30",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = ps1_2133_486sx30_config
+};
+
+/*
+ * 8042 input port. The BIOS insists on bits 0-5 reading as ones; bit 6 is a
+ * planar strap that selects which DRAM timing set POST loads into the chipset.
+ */
+uint8_t
+machine_ps1_m2133_486sx30_p1_handler(void)
+{
+    return 0xff;
+}
+
+int
+machine_ps1_m2133_486sx30_init(const machine_t *model)
+{
+    int         ret = 0;
+    const char *fn;
+
+    /* No ROMs available. */
+    if (!device_available(model->device))
+        return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000e0000, 131072, 0);
+    device_context_restore();
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_init(model);
+
+    device_add(&vl82c330_device);
+    device_add(&ps1_vl82c106_device);
+
+    device_add(&ide_isa_device);
+    device_add(&fdc_at_device);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
+    return ret;
+}

@@ -405,6 +405,7 @@ extern const device_t via_vt8231_device;
 #define VL82C480_CACHE_256K  0x0800
 #define VL82C480_CACHE_SHIFT 8
 
+extern const device_t vl82c330_device;
 extern const device_t vl82c480_device;
 extern const device_t vl82c486_device;
 extern const device_t vl82c59x_device;

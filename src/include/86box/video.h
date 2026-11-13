@@ -507,6 +507,7 @@ extern const device_t et3000_isa_device;
 /* Tseng ET4000AX */
 extern const device_t et4000_isa_device;
 extern const device_t et4000_mca_device;
+extern const device_t et4000_onboard_device;
 
 /* Tseng ET4000-W32x */
 extern const device_t et4000w32_isa_device;

@@ -314,6 +314,7 @@ enum {
     MACHINE_CHIPSET_VIA_APOLLO_PRO_133,
     MACHINE_CHIPSET_VIA_APOLLO_PRO_133A,
     MACHINE_CHIPSET_VLSI_SCAMP,
+    MACHINE_CHIPSET_VLSI_VL82C330,
     MACHINE_CHIPSET_VLSI_VL82C480,
     MACHINE_CHIPSET_VLSI_VL82C481,
     MACHINE_CHIPSET_VLSI_VL82C486,
@@ -1735,6 +1736,11 @@ extern const device_t  ps1_2133_device;
 extern int             machine_ps1_m2011_init(const machine_t *);
 extern int             machine_ps1_m2121_init(const machine_t *);
 extern int             machine_ps1_m2133_init(const machine_t *);
+#ifdef EMU_DEVICE_H
+extern const device_t  ps1_2133_486sx30_device;
+#endif
+extern uint8_t         machine_ps1_m2133_486sx30_p1_handler(void);
+extern int             machine_ps1_m2133_486sx30_init(const machine_t *);
 
 /* m_ps1_hdc.c */
 #ifdef EMU_DEVICE_H

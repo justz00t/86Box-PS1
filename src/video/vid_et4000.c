@@ -60,6 +60,7 @@ enum {
     ET4000_TYPE_KOREAN,            /* Korean ET4000 */
     ET4000_TYPE_TRIGEM,            /* TriGem 286M ET4000 */
     ET4000_TYPE_KASAN,             /* Kasan ET4000 */
+    ET4000_TYPE_ONBOARD,           /* On-board ET4000AX, video BIOS is part of the system ROM */
     ET4000_TYPE_USE_CONFIG_BIOS    /* Use BIOS from device_config */
 };
 
@@ -869,6 +870,20 @@ et4000_init(const device_t *info)
             fn            = (char *) device_get_bios_file(info, bios_ver, 0);
             break;
 
+        case ET4000_TYPE_ONBOARD: /* On-board ET4000AX */
+            dev->svga.clock_gen = device_add(&ics2494an_304_device);
+            dev->svga.getclock  = ics2494_getclock;
+            vram                = device_get_config_int("memory");
+            dev->vram_size      = vram << 10;
+            video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_et4000_isa);
+            svga_init(info, &dev->svga, dev, dev->vram_size,
+                      et4000_recalctimings, et4000_in, et4000_out,
+                      NULL, NULL);
+            io_sethandler(0x03a0, 64,
+                          et4000_in, NULL, NULL, et4000_out, NULL, NULL, dev);
+            fn = NULL;
+            break;
+
         case ET4000_TYPE_MCA: /* MCA ET4000AX */
             dev->vram_size                      = 1024 << 10;
             video_inform(VIDEO_FLAG_TYPE_SPECIAL, &timing_et4000_mca);
@@ -960,8 +975,9 @@ et4000_init(const device_t *info)
 
     dev->svga.line_compare = et4000_line_compare;
 
-    rom_init(&dev->bios_rom, fn,
-        0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+    if (fn != NULL)
+        rom_init(&dev->bios_rom, fn,
+            0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
 
     if (dev->type == ET4000_TYPE_MCA)
         mem_mapping_disable(&dev->bios_rom.mapping);
@@ -1139,6 +1155,20 @@ const device_t et4000_isa_device = {
     .speed_changed = et4000_speed_changed,
     .force_redraw  = et4000_force_redraw,
     .config        = et4000_bios_config
+};
+
+const device_t et4000_onboard_device = {
+    .name          = "Tseng Labs ET4000AX (On-Board)",
+    .internal_name = "et4000ax_onboard",
+    .flags         = DEVICE_ISA | DEVICE_ISA16,
+    .local         = ET4000_TYPE_ONBOARD,
+    .init          = et4000_init,
+    .close         = et4000_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = et4000_speed_changed,
+    .force_redraw  = et4000_force_redraw,
+    .config        = et4000_config
 };
 
 const device_t et4000_mca_device = {

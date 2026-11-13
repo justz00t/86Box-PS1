@@ -117,6 +117,7 @@ add_library(chipset OBJECT
     ut85c50x.c
     via_apollo.c
     via_pipc.c
+    vl82c330.c
     vl82c480.c
     vl82c59x.c
     wd76c10.c
