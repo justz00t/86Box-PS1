@@ -129,7 +129,7 @@ option(MUNT         "MUNT"                                                      
 option(SOUNDCANVAS  "Sound Canvas (CLAP)"                                        ON)
 option(VNC          "VNC renderer"                                               OFF)
 option(MINITRACE    "Enable Chrome tracing using the modified minitrace library" OFF)
-option(GDBSTUB      "Enable GDB stub server for debugging"                       OFF)
+option(GDBSTUB      "Enable GDB stub server for debugging"                       ON)
 option(AUTOMATION   "Enable the automation control socket"                       OFF)
 option(DISASM       "Disassembler in the memory viewer (Zydis)"                   ON)
 option(DEV_BRANCH   "Development branch"                                         OFF)
